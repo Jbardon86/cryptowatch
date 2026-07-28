@@ -1,0 +1,12 @@
+# Runtime config — holds alert rules AND secrets: delivery credentials
+# (Telegram bot token, Discord webhook URL) plus optional API keys
+# (CoinGecko, Anthropic/Claude, GitHub token). Never commit this.
+config.json
+
+# npm deps (web3.js vendored into public/vendor)
+node_modules/
+package-lock.json
+
+# Local Claude Code / editor tooling (has machine-specific absolute paths)
+.claude/
+.DS_Store

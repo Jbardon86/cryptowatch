@@ -1,0 +1,40 @@
+# Render Blueprint — deploys CryptoWatch as a single web service.
+# Put this at the ROOT of the repo you connect to Render. If you deploy the
+# whole `valadate` monorepo instead of a standalone cryptowatch repo, uncomment
+# `rootDir: cryptowatch` below.
+services:
+  - type: web
+    name: cryptowatch
+    runtime: node
+    plan: free # free sleeps after ~15m idle (live feed pauses); use "starter" to stay always-on
+    # rootDir: cryptowatch
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: COINGECKO_PLAN
+        value: demo
+      # --- Secrets: set the VALUES in the Render dashboard, not here (sync:false
+      #     means "prompt me, don't read from the blueprint"). Leave unset to
+      #     disable that feature. ---
+      - key: AUTH_PASS # STRONGLY recommended for a public URL — enables a password gate
+        sync: false
+      - key: AUTH_USER # optional; defaults to any username if only AUTH_PASS is set
+        sync: false
+      - key: ANTHROPIC_API_KEY # powers AI risk read + digest + "why it matters"
+        sync: false
+      - key: COINGECKO_API_KEY # optional free Demo key lifts the markets rate limit
+        sync: false
+      - key: GITHUB_TOKEN # optional; lifts the 60 req/hr GitHub limit for dev activity
+        sync: false
+      # --- Optional: persist alert rules + delivery config across deploys by
+      #     attaching a disk and pointing CONFIG_PATH at it (see the `disk` block). ---
+      # - key: CONFIG_PATH
+      #   value: /data/config.json
+    # disk:
+    #   name: cryptowatch-data
+    #   mountPath: /data
+    #   sizeGB: 1

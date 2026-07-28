@@ -1,0 +1,17 @@
+{
+  "name": "cryptowatch",
+  "version": "1.0.0",
+  "description": "Live crypto launch radar + market-intelligence + research terminal",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "//": "@solana/web3.js is only the source of the vendored public/vendor/solana-web3.js UMD build; the server itself has zero runtime deps.",
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4"
+  }
+}
