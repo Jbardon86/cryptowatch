@@ -1,197 +1,205 @@
-# CryptoWatch — live crypto launch radar
+# CryptoWatch — live launch radar + crypto research terminal
 
-A zero-dependency dashboard that streams **brand-new token launches across every
-chain**, seconds after they go live, plus a Trending view. Built on GeckoTerminal's
-free public API (no key required) with DexScreener links for deeper inspection.
+A zero-dependency web app that fuses two things under one roof:
 
-![new launches, seconds old, with liquidity/volume/flow and a risk read]
+- **Launch side** — brand-new token launches across every chain, seconds after
+  they go live, with on-chain rug/safety checks, real-time alerts + delivery, and
+  a non-custodial swap.
+- **Research side** — the full ~17k-coin market universe, a clustered multi-source
+  news engine, an AI research layer (sentiment, trending narratives, digests), and
+  primary sources (governance + developer activity) — all wired into a **unified
+  per-asset page** that shows everything we know about one coin in one place.
+
+Built on free public APIs (no key required to run) with optional keys to lift
+rate limits and turn on the AI features. Node's built-in `http`/`fetch` only —
+**no framework, no build step, no runtime npm dependencies.**
+
+> ⚠️ **Data only — not financial advice and not a safety guarantee.** The vast
+> majority of brand-new tokens are scams or rugs. Every risk signal here is a
+> heuristic or an on-chain read, never a recommendation. Always verify on-chain
+> before acting. The app is **non-custodial** — it never holds keys, signs, or
+> moves funds; your own wallet signs every trade.
+
+---
 
 ## Run
 
 ```bash
-node cryptowatch/server.js
-# open http://localhost:4000
+node server.js           # defaults to http://localhost:4000
+PORT=4010 node server.js # or pick a port (the server reads $PORT)
 ```
 
-No `npm install` — it uses only Node's built-in `http`/`fetch` (needs Node 18+).
+Needs **Node 18+** (for built-in `fetch`). No `npm install` required to run the
+server — the only dependency, `@solana/web3.js`, is vendored into
+`public/vendor/` and used purely client-side for the swap UI.
 
-## What it does
+To deploy it to the cloud (Render), see **[DEPLOY.md](DEPLOY.md)**.
 
-- **New launches tab** — polls GeckoTerminal `new_pools` (cross-chain) every 5s,
-  dedupes by pool, and pushes fresh launches to the browser over Server-Sent
-  Events. Rows show age (live-ticking), price, liquidity, 1h volume, 1h
-  buy/sell counts, 5m price change, a **risk score**, and flags.
-- **Trending tab** — GeckoTerminal `trending_pools`, refreshed every 20s.
-- **Filters** — search by name/token address, chain, min liquidity, min 1h
-  volume, and a "hide no-sells" toggle.
-- **Sorting** — click any numeric column header (Price, Liquidity, Vol 1h,
-  Δ 5m, Risk, Age) to sort; click again to flip direction. A ▲/▼ marks the
-  active column. Default (unsorted) is newest-first on the New tab.
-- **Risk score (0–100)** — a *heuristic* read of liquidity depth, FDV/liquidity
-  ratio, buy/sell flow, and volume/liquidity ratio. Higher = healthier-looking.
-- **Deep safety check (per row, on-demand)** — click 🛡 on any row to run the
-  checks that actually catch rugs, then expand the checklist:
-  - **Solana** (public RPC, no key): mint authority renounced?, freeze authority
-    present?, standard SPL vs. Token-2022 (transfer fees/hooks), and best-effort
-    holder concentration.
-  - **EVM — ETH / BSC / Base** (honeypot.is): live buy/sell **simulation**
-    (can you actually sell?), buy/sell/transfer taxes, and verified-source status.
-  - **LP lock / burn** (EVM, via public RPC): for UniswapV2-style pairs the pair
-    contract *is* the LP token, so we read how much of its supply sits in burn
-    addresses or major lockers (UNCX / Team Finance / PinkLock). ≥95% secured →
-    good; a failed read reports *unknown*, never a fake 0%. V3 pools (NFT
-    positions) and Solana report an honest "not readable this way" note.
-  - Results roll up to a **PASSED / CAUTION / DANGER** badge and are cached 60s.
-- **Real-time alerts** — the 🔔 Alerts tab lets you define rules (chain, min
-  liquidity, min 1h volume, max age, min risk score, and an optional **safety
-  gate**: off / block DANGER / PASSED-only). Every new launch is matched against
-  enabled rules server-side using data we already have (no extra API calls);
-  only the few that clear those gates get a deep safety check, capped per cycle
-  to respect rate limits. Matches fire a **browser notification + sound** and
-  drop into a live, grade-color-coded feed.
-- **Alert delivery — Telegram / Discord / Webhook** — configure any of the three
-  in the Alerts tab so matches reach you even with the tab closed. Telegram
-  (bot token + chat id), Discord (channel webhook URL), or a generic webhook
-  that receives a JSON POST `{event, pool, ruleName, safety, at}` per alert.
-  "Send test" verifies wiring. Secrets are never logged and are masked on read
-  (the API returns `tokenSet: true`, never the value).
-- **Config persists across restarts** — alert rules and delivery settings are
-  saved to `config.json` on every change and reloaded at startup, so your setup
-  survives a restart. That file holds delivery secrets, so it's **gitignored**;
-  it's created on first change and absent until then.
+---
 
-## Markets intelligence (Messari-style)
+## Features
 
-Beyond new launches, the app has a market-intelligence side for established assets:
+### 🚀 New launches / 🔥 Trending
+Cross-chain new pools from GeckoTerminal, pushed to the browser over
+Server-Sent Events. Rows show live-ticking age, price, liquidity, 1h volume, 1h
+buy/sell counts, 5m change, a **risk score (0–100)**, safety badge, flags, and
+GT/DEX links. Sortable columns; filters for search, chain, min liquidity, min
+volume, and "hide no-sells". Trending mirrors GeckoTerminal's trending pools.
 
-- **📊 Markets** — a deep, market-cap ranked table of the whole tradable
-  universe (CoinGecko free API): logo, price, 1h/24h/7d change, market cap, 24h
-  volume, and a 7-day sparkline. Loads **250 at a time** with a **Load more**
-  button to page as deep as you want (out of ~17,000+ coins tracked; the header
-  shows "N shown · M loaded of ~Total tracked"). Click any row for its detail page.
-  - **Universe-wide sort**: the **Top cap / Low cap ↑ / Top volume / Low volume**
-    presets (and the Market Cap / Volume column headers) re-order *all* ~17k
-    coins server-side and reload from page 1 — so "Low cap ↑" surfaces the true
-    smallest coins in one fetch, not just a re-sort of what's loaded. Columns
-    CoinGecko can't order by (price, % change) sort the loaded rows only.
-  - **Page numbers**: 250 coins per page with a `Prev · 1 2 … 59 60 · Next`
-    bar and a jump-to-page box — navigate the whole ~60-page universe directly.
-  - **Range filter**: cap-tier buttons (Micro <$1M / Small $1M–$50M / Mid /
-    Large), custom min/max market cap, and a **min 24h volume** floor (accepts
-    shorthand like `50k`, `5m`). The volume floor hides dead $0 coins so "low
-    cap" surfaces real, liquid small-caps. Filters the current page; sort +
-    page to browse a whole tier.
-- **Asset detail** — click any coin for a full profile: 7-day price chart, big
-  price + 24h/7d/30d change, a stat grid (market cap, volume, circ/max supply,
-  ATH/ATL, 24h high/low), a description, and links (website, X, CoinGecko).
-- **📰 News & research** — a real research surface, not a flat feed. Aggregates
-  **11 sources** (CoinDesk, Cointelegraph, Decrypt, The Block, Bankless, DL News,
-  The Defiant, CryptoSlate, Protos, BeInCrypto, CryptoPotato) into a rolling
-  ~500-item index, then:
-  - **Clusters duplicate stories** — one event reported by N outlets becomes a
-    single card showing "+N more · sources" (title-token similarity).
-  - **Topic tags** — auto-classified (Regulation, Security, DeFi, L2s, Macro,
-    Funding, …) with filter chips.
-  - **Asset detection** — coins named in a headline become clickable **$SYMBOL**
-    tags that **open that coin's Markets detail** (news ↔ live-data fusion).
-  - **Full-text search** across headlines, summaries, and detected assets, plus
-    a source filter.
-- **News ↔ data fusion** — the research bridge no feed has:
-  - **Per-asset news** on every coin's Markets detail page (`/news/asset`).
-  - **"What moved price"** — each mention is plotted as an **amber marker on the
-    7-day price chart** at its headline time (hover for the title), so you can
-    see which news preceded a move.
-  - **Watchlists** (localStorage) — ★ any coin from a Markets row or its detail
-    page, then filter **Markets** (★ Watchlist) and **News** (★ Watched) down to
-    what you follow.
+The **risk score** is a *heuristic* read of liquidity depth, FDV/liquidity ratio,
+buy/sell flow, and volume/liquidity ratio — higher = healthier-*looking*. It says
+nothing about a contract's actual honeypot/rug risk; that's the safety check.
 
-All three are cached server-side to stay within free rate limits.
+### 🛡 Safety check (per launch, on-demand)
+The checks that actually catch rugs:
+- **Solana** (public RPC): mint authority renounced?, freeze authority present?,
+  SPL vs. Token-2022 (transfer fees/hooks), best-effort holder concentration.
+- **EVM — ETH / BSC / Base** (honeypot.is): live buy/sell **simulation** (can you
+  actually sell?), buy/sell/transfer taxes, verified-source status.
+- **LP lock / burn** (EVM, public RPC): for V2-style pairs the pair contract *is*
+  the LP token, so we read how much of its supply is burned/locked (UNCX / Team
+  Finance / PinkLock). ≥95% secured → good; a failed read reports *unknown*, never
+  a fake 0%. V3 (NFT positions) and Solana get an honest "not readable this way".
 
-**Optional CoinGecko key** — Markets works with no key (anonymous public tier),
-but that tier is rate-limited. Add a key to lift the ceiling via the **⚙ API key**
-button on the Markets tab (or the `COINGECKO_API_KEY` / `COINGECKO_PLAN` env
-vars). Supports both the free **Demo** tier (public host, `x-cg-demo-api-key`)
-and paid **Pro** (pro host, `x-cg-pro-api-key`); a UI value overrides the env
-var. The key is persisted in the gitignored `config.json`, masked on read
-(`keySet: true`), and never sent to the browser. Changing it clears the market
-caches so it takes effect immediately.
+Rolls up to a **PASSED / CAUTION / DANGER** badge, cached 60s.
 
-## Swap (non-custodial — Solana via Jupiter)
+### 🔔 Alerts + delivery
+Rule builder (chain, min liquidity, min 1h volume, max age, min risk, and a
+**safety gate**: off / block DANGER / PASSED-only). Every new launch is matched
+server-side using data already in hand; only cheap-passing candidates get a deep
+safety check, capped per cycle to respect rate limits. Matches fire a **browser
+notification + sound + live feed**, and can be delivered **tab-closed** via
+**Telegram**, **Discord**, or a **generic webhook**. Rules + delivery persist in
+a gitignored `config.json` (secrets masked on read, never sent to the browser).
 
-Turn a spotted launch into a trade without leaving the app. The **💱 Swap** tab
-(and a green **Swap** button on every Solana launch row) opens a swap panel:
+### 📊 Markets
+The whole tradable universe via CoinGecko — **250/page** across ~60 pages of
+~17,800 coins, with page-number pagination + jump box. **Universe-wide sort**
+presets (Top/Low cap, Top/Low volume) reorder *all* coins server-side; a **range
+filter** (cap tiers + custom min/max cap + min 24h volume floor) hides dead $0
+coins. ★ **Watchlist** (localStorage) stars coins and filters Markets/News down
+to what you follow.
 
-- **Connect Phantom** — your wallet holds the keys and signs every transaction.
-- **Buy / Sell**, amount, and **max-slippage** control (0.5–10%).
-- Live **Jupiter** quote: estimated output, price impact, min received, hop count.
-- On Swap, the server asks Jupiter to **build an unsigned transaction**; your
-  Phantom wallet signs and sends it. A Solscan link confirms submission.
+### 📰 News & research
+**11 RSS sources** (CoinDesk, Cointelegraph, Decrypt, The Block, Bankless, DL
+News, The Defiant, CryptoSlate, Protos, BeInCrypto, CryptoPotato) → a rolling
+~500-item index that:
+- **Clusters duplicate stories** — one event across N outlets = one card ("+N
+  more · sources").
+- **Topic tags** (Regulation, Security, DeFi, L2s, Macro, Funding, Unlocks, …)
+  with filter chips.
+- **Asset detection** — coins in a headline become clickable **$SYMBOL** tags that
+  open that coin's page (news ↔ data fusion).
+- **Sentiment dot** per story, full-text search, and a source filter.
 
-**The server never holds keys, never signs, and never sends funds** — it only
-fetches routes and builds unsigned transactions (`/swap/quote`, `/swap/build`).
-This is the standard non-custodial DEX-frontend model. `@solana/web3.js` is
-vendored locally (`public/vendor/`, no CDN) to deserialize the transaction for
-Phantom.
+### 🧠 Research (AI research layer)
+Synthesis over the live news index:
+- **Market mood** — a lexicon sentiment gauge (risk-on / risk-off / mixed) over
+  recent clustered headlines. *Free, always-on.*
+- **Trending narratives** — topic momentum (last 6h vs. prior), ranked by current
+  volume then acceleration, each with sentiment, sample headlines, and the assets
+  riding the wave. *Free heuristic.*
+- **Most-mentioned assets** — coins ranked by news mentions.
+- **"What matters now" digest** — a Claude-written briefing over the top stories.
+  *Optional Claude key.*
+- **Per-story "why it matters"** — a 🧠 button on each News card for a 1–2 sentence
+  significance read. *Optional Claude key.*
 
-> Status: **Solana (Jupiter) is built and verified through the quote/build
-> flow.** The final wallet-signing step needs a real browser with the Phantom
-> extension. **EVM swaps (0x/1inch + MetaMask) are the next stage.**
+### 📡 Signals (primary sources)
+Straight-from-the-source data:
+- **Governance** — live active DAO proposals from **Snapshot**, biggest-DAO-first,
+  with time-to-close and vote counts.
+- **Developer activity** — **GitHub** shipping velocity for major protocols:
+  commits in the last 7 days, stars, open issues, last push (optional GitHub token
+  lifts the rate limit).
+- **Funding** & **Unlocks** — surfaced from the news index (raises/rounds, and
+  unlock/vesting mentions). A *structured* rounds/unlock calendar needs a paid data
+  key — the hook is staged.
 
-## AI risk read (Claude — optional)
+### 💱 Swap (non-custodial — Solana via Jupiter)
+Turn a spotted token into a trade without leaving the app. Connect **Phantom**,
+pick Buy/Sell + amount + max slippage, see a live Jupiter quote (output, price
+impact, min received, hops). The server only fetches routes and builds an
+**unsigned** transaction; your Phantom wallet signs and sends it. Solscan link on
+submit. **The server never holds keys, signs, or sends funds.** (EVM swaps via
+0x/1inch + MetaMask are the next stage.)
 
-With an optional Anthropic API key, each launch's safety check gains a
-**🧠 AI risk read** button. Claude (`claude-opus-5`) reads the raw on-chain
-signals — honeypot sim, LP-lock/burn, mint/freeze authority, liquidity, holder
-concentration — and writes a short plain-English risk verdict ending in a
-"Bottom line:". It describes risk only: **no buy/sell calls, no price
-predictions, not financial advice** (enforced in the system prompt).
+### 🔗 Unified asset page (the capstone)
+Click any coin — from Markets, a News `$SYMBOL` tag, or the Research board — and
+get **one research surface** that fuses everything for that coin:
+- price + 7-day chart with **"what moved price"** news markers, 24h/7d/30d, a stat
+  grid, description, links;
+- **On-chain & trade** — every supported-chain contract, each with the *same rug
+  safety check used on new launches* run inline, plus a non-custodial **Swap** on
+  Solana;
+- **Developer activity** — the coin's GitHub repo (auto-detected from CoinGecko),
+  commits/7d, stars, issues, last push;
+- **Governance** — the DAO's recent Snapshot proposals (active/closed + votes);
+- **In the news** — per-asset clustered mentions.
 
-- Set the key under **Alerts ▸ AI risk analysis** (or the `ANTHROPIC_API_KEY`
-  env var). No key → the button is replaced by a hint; nothing calls out.
-- The call is made **server-side** via `/ai/risk`; the key is stored in the
-  gitignored `config.json`, masked on read, and never sent to the browser.
-- Verdicts are cached 5 min per token. Cost is a fraction of a cent per read.
+Mapping is automatic where CoinGecko provides it (GitHub repo + contract
+addresses); Snapshot spaces are a curated map of the major DAOs.
 
-> Status: **built and verified through the request pipeline** (the bogus-key
-> test returned Anthropic's own `invalid x-api-key`, proving the call is wired).
-> Add your key to get live verdicts. The other three AI features — asset
-> explainer, news digest, and a natural-language screener — are the next stage.
+### 🧠 AI features (optional Claude key)
+An optional Anthropic key powers three features, all guardrailed to **describe risk
+only — no buy/sell calls, no price predictions, not financial advice** (enforced in
+the system prompt):
+1. **AI risk read** — turns a launch's on-chain safety signals into a plain-English
+   verdict ending in "Bottom line:".
+2. **"What matters now" digest** — a briefing over the top news stories.
+3. **Per-story "why it matters"** — significance of a single headline.
 
-## ⚠️ Important
+Calls are made **server-side** (`/ai/*`) with `claude-opus-5`; the key is stored in
+the gitignored `config.json` (or an env var), masked on read, and never sent to the
+browser. No key → the features stay off and everything else works.
 
-This surfaces **data only — it is not financial advice and not a safety
-guarantee**. The vast majority of brand-new tokens are scams or rugs. The deep
-safety check is a strong first filter (it reads real on-chain authority state,
-simulates trades, and measures LP burn/lock), but it is NOT a full audit: it
-does not yet detect malicious proxy-upgrade paths, every Token-2022 hook, or
-lockers outside the tracked set, and LP-lock is EVM-only. Always verify
-on-chain before acting.
+---
+
+## Optional keys
+
+All free-tier with no key. Add these (in-app UI **or** env var; stored gitignored +
+masked) to lift limits / enable AI:
+
+| Key | Enables | Env var |
+|---|---|---|
+| **CoinGecko** (Demo or Pro) | Lifts the Markets rate limit | `COINGECKO_API_KEY` / `COINGECKO_PLAN` |
+| **Anthropic / Claude** | AI risk read + digest + "why it matters" | `ANTHROPIC_API_KEY` |
+| **GitHub token** | Lifts GitHub's 60 req/hr for dev activity | `GITHUB_TOKEN` |
+| **Telegram / Discord / webhook** | Alert delivery | (set in the Alerts tab) |
+
+For **public hosting**, set **`AUTH_PASS`** to password-gate the whole site (it
+exposes key-funded AI + config endpoints). See [DEPLOY.md](DEPLOY.md).
+
+---
+
+## Data sources (all free, no key required to run)
+
+GeckoTerminal (launches/trending) · honeypot.is (EVM safety) · Solana &
+EVM public RPCs · CoinGecko (markets/asset/global) · Jupiter (swap) · 11 news RSS
+feeds · Snapshot (governance) · GitHub (dev activity) · Anthropic (optional AI).
 
 ## Architecture
 
 ```
-GeckoTerminal free API  ──poll──▶  server.js (Node, in-memory buffer)
-                                       │  Server-Sent Events (/stream)
-                                       ▼
-                                  public/index.html (live table)
+free public APIs ──poll──▶  server.js (Node, in-memory buffers, zero deps)
+                               │  Server-Sent Events (/stream) + REST endpoints
+                               ▼
+                          public/index.html (self-contained tabbed SPA)
 ```
 
-- `server.js` — poll loops, normalization, risk scoring, SSE broadcast, static serving.
-- `public/index.html` — self-contained UI (HTML/CSS/JS, no build step).
+- `server.js` — poll loops, normalization, risk scoring, safety checks, alerts +
+  delivery, markets/news/research/signals/swap/AI endpoints, SSE, static serving.
+- `public/index.html` — the entire UI (HTML/CSS/vanilla JS, no build step).
 
-## Where to take it next (v2)
+There's a fuller engineering handoff in [HANDOFF.md](HANDOFF.md).
 
-Free tier is rate-limited (~30 req/min) and latency is ~2–10s. To get true
-sniping latency and real safety checks:
+## Roadmap
 
-1. **Paid provider / node WebSocket** — Helius (Solana), Birdeye, Moralis,
-   Bitquery, or a raw RPC log subscription. Sub-second, push instead of poll.
-   A dedicated RPC key also fixes the public-RPC rate-limiting on holder lookups.
-2. **Finish the safety layer** — mint/freeze authority, honeypot simulation,
-   taxes, and EVM LP-lock/burn are done (see above). Still to add: **Solana
-   LP-burn** (needs a Solana LP indexer), a broader locker registry, V3 position
-   locks, and proxy-upgrade / ownership-takeback checks.
-3. **Backtesting store** — persist the launch stream itself (not just config)
-   so you can replay history and test which signals preceded winners vs. rugs.
-4. **Multi-user / auth** — today it's single-user local. Sessions + per-user
-   config would make it shareable.
+- **AI asset explainer** + **natural-language screener** (finish the AI set).
+- **EVM swaps** (0x/1inch + MetaMask) — the second half of the swap feature.
+- **Structured funding/unlock calendar** — needs a paid data key (DefiLlama Pro /
+  CryptoRank / Token Unlocks); the hooks are staged.
+- **Persist the launch stream** for backtesting which signals preceded winners vs.
+  rugs.
+- **Sub-second launch latency** via a paid provider / node WebSocket (Helius /
+  Birdeye / Bitquery).
