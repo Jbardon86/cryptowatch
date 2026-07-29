@@ -467,6 +467,14 @@
       .screener input { flex: 1; min-width: 220px; }
       .screener .sc-note { flex-basis: 100%; color: #c9b3ff; font-size: 12px; margin-top: 2px; }
       .screener .hint { flex-basis: 100%; }
+      /* EVM swap modal (MetaMask + OpenOcean) — reuses .swap-modal styles */
+      #evmSwapOverlay {
+        display: none; position: fixed; inset: 0; z-index: 60;
+        background: rgba(0,0,0,0.6); backdrop-filter: blur(3px);
+        align-items: flex-start; justify-content: center; padding: 48px 16px; overflow-y: auto;
+      }
+      #evmSwapOverlay.show { display: flex; }
+      .side-btn[data-eside="sell"].active { background: #3a2330; border-color: #7e3350; }
     </style>
   </head>
   <body>
@@ -804,6 +812,40 @@
         <button class="btn swap-go" id="swap-go" disabled>Enter an amount</button>
         <div class="swap-status" id="swap-status"></div>
         <div class="swap-disclaimer">⚠️ <b>Non-custodial</b> — your Phantom wallet signs every trade; this site never holds your keys or funds. Brand-new tokens are extremely risky (rugs/honeypots) — run the safety check first. <b>Not financial advice.</b></div>
+      </div>
+    </div>
+
+    <div id="evmSwapOverlay">
+      <div class="swap-modal">
+        <button class="asset-close" id="evm-close">✕</button>
+        <div class="swap-hd">Swap <span class="swap-chain" id="evm-chain-label">EVM · OpenOcean</span></div>
+        <div class="swap-wallet-row">
+          <button class="btn ghost" id="evm-connect">Connect MetaMask</button>
+          <span id="evm-wallet" class="muted"></span>
+        </div>
+        <div class="swap-side">
+          <button class="side-btn active" data-eside="buy">Buy</button>
+          <button class="side-btn" data-eside="sell">Sell</button>
+        </div>
+        <div class="swap-field">
+          <label>You pay</label>
+          <div class="swap-input"><input id="evm-amount" type="number" placeholder="0.0" /><span id="evm-pay-sym" class="swap-sym">ETH</span></div>
+        </div>
+        <div class="swap-arrow">↓</div>
+        <div class="swap-field">
+          <label>You receive (estimate)</label>
+          <div class="swap-input"><input id="evm-out" disabled placeholder="0.0" /><span id="evm-recv-sym" class="swap-sym">TOKEN</span></div>
+        </div>
+        <div class="swap-slip">Max slippage:
+          <button class="slip-btn" data-ebps="0.5">0.5%</button>
+          <button class="slip-btn active" data-ebps="1">1%</button>
+          <button class="slip-btn" data-ebps="3">3%</button>
+          <button class="slip-btn" data-ebps="10">10%</button>
+        </div>
+        <div class="swap-meta" id="evm-meta"></div>
+        <button class="btn swap-go" id="evm-go" disabled>Enter an amount</button>
+        <div class="swap-status" id="evm-status"></div>
+        <div class="swap-disclaimer">⚠️ <b>Non-custodial</b> — your MetaMask signs every transaction; this site never holds your keys or funds. Routed via the OpenOcean aggregator (keyless). ERC-20 sells need a one-time token approval first. <b>Not financial advice.</b></div>
       </div>
     </div>
 
@@ -1739,7 +1781,9 @@
         const sym = (a.symbol || "").toUpperCase();
         const rows = a.contracts.map((ct) => {
           const swap = ct.network === "solana"
-            ? `<button class="row-swap" data-mint="${ct.address}" data-sym="${escapeHtml(sym)}">Swap</button>` : "";
+            ? `<button class="row-swap" data-mint="${ct.address}" data-sym="${escapeHtml(sym)}">Swap</button>`
+            : (["eth", "base", "bsc"].includes(ct.network)
+              ? `<button class="row-swap evm-swap" data-net="${ct.network}" data-token="${ct.address}" data-sym="${escapeHtml(sym)}">Swap</button>` : "");
           return `<div class="onchain-row">
             <span class="chain">${escapeHtml(ct.chain)}</span>
             <span class="sub copyaddr" data-addr="${ct.address}" title="${ct.address} — click to copy">${ct.address.slice(0, 8)}…${ct.address.slice(-6)} <span class="copyicon">⧉</span></span>
@@ -1901,7 +1945,12 @@
         const sb = e.target.closest(".asset-safety-btn");
         if (sb) { e.stopPropagation(); assetSafety(sb.dataset.net, sb.dataset.token, sb); return; }
         const sw = e.target.closest(".row-swap");
-        if (sw) { e.stopPropagation(); openSwap(sw.dataset.mint, sw.dataset.sym); return; }
+        if (sw) {
+          e.stopPropagation();
+          if (sw.classList.contains("evm-swap")) openEvmSwap(sw.dataset.net, sw.dataset.token, sw.dataset.sym);
+          else openSwap(sw.dataset.mint, sw.dataset.sym);
+          return;
+        }
       });
       $("assetOverlay").addEventListener("click", (e) => { if (e.target === $("assetOverlay")) closeAsset(); });
       document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAsset(); });
@@ -2343,6 +2392,149 @@
         e.stopPropagation();
         openSwap(el.dataset.mint, el.dataset.sym);
       });
+
+      // ===== EVM Swap (MetaMask · OpenOcean · non-custodial) =====
+      const EVM_NATIVE_ADDR = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+      const EVM_CHAINS = {
+        eth:  { id: "0x1",    name: "Ethereum",  native: "ETH", explorer: "https://etherscan.io", rpc: "https://ethereum-rpc.publicnode.com" },
+        base: { id: "0x2105", name: "Base",      native: "ETH", explorer: "https://basescan.org",  rpc: "https://base-rpc.publicnode.com" },
+        bsc:  { id: "0x38",   name: "BNB Chain", native: "BNB", explorer: "https://bscscan.com",   rpc: "https://bsc-rpc.publicnode.com" },
+      };
+      state.evm = { chain: "eth", token: null, symbol: "TOKEN", side: "buy", slippage: 1, account: null, quote: null };
+      const evmSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      function toHex(n) { return "0x" + BigInt(n).toString(16); }
+
+      function openEvmSwap(chain, token, symbol) {
+        if (!EVM_CHAINS[chain] || !token) return;
+        const s = state.evm;
+        s.chain = chain; s.token = token; s.symbol = (symbol || "TOKEN").toUpperCase();
+        s.side = "buy"; s.quote = null;
+        $("evm-chain-label").textContent = `${EVM_CHAINS[chain].name} · OpenOcean`;
+        $("evmSwapOverlay").classList.add("show");
+        $("evm-amount").value = ""; $("evm-out").value = "";
+        $("evm-meta").innerHTML = ""; $("evm-status").textContent = "";
+        evmUpdateSideUI(); evmRenderWallet(); evmSetGo(false, "Enter an amount");
+      }
+      function closeEvmSwap() { $("evmSwapOverlay").classList.remove("show"); }
+      $("evm-close").addEventListener("click", closeEvmSwap);
+      $("evmSwapOverlay").addEventListener("click", (e) => { if (e.target === $("evmSwapOverlay")) closeEvmSwap(); });
+
+      function evmUpdateSideUI() {
+        const s = state.evm, nat = EVM_CHAINS[s.chain].native, buy = s.side === "buy";
+        $("evm-pay-sym").textContent = buy ? nat : s.symbol;
+        $("evm-recv-sym").textContent = buy ? s.symbol : nat;
+        document.querySelectorAll("#evmSwapOverlay .side-btn").forEach((b) => b.classList.toggle("active", b.dataset.eside === s.side));
+      }
+      function evmRenderWallet() {
+        const a = state.evm.account;
+        $("evm-wallet").textContent = a ? `🟢 ${a.slice(0, 6)}…${a.slice(-4)}` : "";
+        $("evm-connect").textContent = a ? "Disconnect" : "Connect MetaMask";
+      }
+      async function evmToggleWallet() {
+        const eth = window.ethereum;
+        if (!eth) { $("evm-status").innerHTML = 'MetaMask not found — <a href="https://metamask.io/download/" target="_blank" rel="noopener">install it</a>, then reload.'; return; }
+        if (state.evm.account) { state.evm.account = null; evmRenderWallet(); evmRefreshGo(); return; }
+        try {
+          const accts = await eth.request({ method: "eth_requestAccounts" });
+          state.evm.account = accts[0];
+          evmRenderWallet(); evmRefreshGo();
+        } catch (e) { $("evm-status").textContent = "Wallet connection cancelled."; }
+      }
+      $("evm-connect").addEventListener("click", evmToggleWallet);
+
+      async function evmEnsureChain() {
+        const eth = window.ethereum, want = EVM_CHAINS[state.evm.chain];
+        const cur = await eth.request({ method: "eth_chainId" });
+        if (cur === want.id) return;
+        try {
+          await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: want.id }] });
+        } catch (e) {
+          if (e.code === 4902) {
+            await eth.request({ method: "wallet_addEthereumChain", params: [{ chainId: want.id, chainName: want.name, nativeCurrency: { name: want.native, symbol: want.native, decimals: 18 }, rpcUrls: [want.rpc], blockExplorerUrls: [want.explorer] }] });
+          } else throw e;
+        }
+      }
+
+      let evmQuoteTimer = null;
+      function evmScheduleQuote() { clearTimeout(evmQuoteTimer); evmQuoteTimer = setTimeout(evmFetchQuote, 400); }
+      async function evmFetchQuote() {
+        const s = state.evm, amt = parseFloat($("evm-amount").value);
+        if (!amt || amt <= 0) { $("evm-out").value = ""; $("evm-meta").innerHTML = ""; evmSetGo(false, "Enter an amount"); return; }
+        const [inTok, outTok] = s.side === "buy" ? [EVM_NATIVE_ADDR, s.token] : [s.token, EVM_NATIVE_ADDR];
+        evmSetGo(false, "Fetching quote…");
+        try {
+          const q = await (await fetch(`/evm/quote?chain=${s.chain}&in=${inTok}&out=${outTok}&amount=${amt}`)).json();
+          if (q.error || !q.outAmount) { $("evm-out").value = ""; $("evm-meta").innerHTML = ""; evmSetGo(false, "No route found"); return; }
+          s.quote = q;
+          const outDec = q.outToken.decimals;
+          const outHuman = Number(q.outAmount) / Math.pow(10, outDec);
+          const minOut = outHuman * (1 - s.slippage / 100);
+          $("evm-out").value = outHuman.toLocaleString(undefined, { maximumFractionDigits: 6 });
+          const impact = q.price_impact != null ? String(q.price_impact) : "—";
+          $("evm-meta").innerHTML = `Price impact ${impact} &nbsp;·&nbsp; min received ~${minOut.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+          evmRefreshGo();
+        } catch (e) { evmSetGo(false, "Quote failed — try again"); }
+      }
+      function evmSetGo(enabled, text) { const b = $("evm-go"); b.disabled = !enabled; b.textContent = text; }
+      function evmRefreshGo() {
+        if (!state.evm.quote) return;
+        evmSetGo(!!state.evm.account, state.evm.account ? "Swap" : "Connect wallet to swap");
+      }
+      $("evm-amount").addEventListener("input", evmScheduleQuote);
+      document.querySelectorAll("#evmSwapOverlay .side-btn").forEach((b) =>
+        b.addEventListener("click", () => { state.evm.side = b.dataset.eside; evmUpdateSideUI(); evmFetchQuote(); }));
+      document.querySelectorAll("#evmSwapOverlay .slip-btn").forEach((b) =>
+        b.addEventListener("click", () => {
+          document.querySelectorAll("#evmSwapOverlay .slip-btn").forEach((x) => x.classList.remove("active"));
+          b.classList.add("active"); state.evm.slippage = +b.dataset.ebps; evmFetchQuote();
+        }));
+
+      async function evmWaitReceipt(hash) {
+        const eth = window.ethereum;
+        for (let i = 0; i < 60; i++) {
+          try { const r = await eth.request({ method: "eth_getTransactionReceipt", params: [hash] }); if (r) return r; } catch {}
+          await evmSleep(3000);
+        }
+        return null;
+      }
+      async function evmExecute() {
+        const s = state.evm, eth = window.ethereum;
+        if (!eth || !s.account) return evmToggleWallet();
+        if (!s.quote) return;
+        const amt = parseFloat($("evm-amount").value);
+        const [inTok, outTok] = s.side === "buy" ? [EVM_NATIVE_ADDR, s.token] : [s.token, EVM_NATIVE_ADDR];
+        evmSetGo(false, "Preparing…"); $("evm-status").textContent = "";
+        try {
+          await evmEnsureChain();
+          // Build the swap tx first (its `to` is the router = the approval spender).
+          const tx = await (await fetch(`/evm/swap?chain=${s.chain}&in=${inTok}&out=${outTok}&amount=${amt}&slippage=${s.slippage}&account=${s.account}`)).json();
+          if (tx.error || !tx.to) { $("evm-status").textContent = "Build failed: " + (tx.error || "no route"); evmSetGo(true, "Swap"); return; }
+          // ERC-20 sell → ensure allowance to the router.
+          if (s.side === "sell") {
+            const need = BigInt(tx.inAmount || "0");
+            const al = await (await fetch(`/evm/allowance?chain=${s.chain}&token=${s.token}&owner=${s.account}&spender=${tx.to}`)).json();
+            const have = al.allowance != null ? BigInt(al.allowance) : 0n;
+            if (have < need) {
+              $("evm-status").textContent = "Approve the token in MetaMask (one-time)…";
+              const data = "0x095ea7b3" + tx.to.toLowerCase().replace(/^0x/, "").padStart(64, "0") + "f".repeat(64);
+              const approveHash = await eth.request({ method: "eth_sendTransaction", params: [{ from: s.account, to: s.token, data }] });
+              $("evm-status").innerHTML = `Approval sent — waiting for confirmation… <a href="${EVM_CHAINS[s.chain].explorer}/tx/${approveHash}" target="_blank" rel="noopener">view</a>`;
+              const rec = await evmWaitReceipt(approveHash);
+              if (!rec) { $("evm-status").textContent = "Approval didn't confirm in time — try Swap again once it's mined."; evmSetGo(true, "Swap"); return; }
+            }
+          }
+          $("evm-status").textContent = "Confirm the swap in MetaMask…";
+          const params = [{ from: s.account, to: tx.to, data: tx.data }];
+          if (tx.value && tx.value !== "0") params[0].value = toHex(tx.value);
+          const hash = await eth.request({ method: "eth_sendTransaction", params });
+          $("evm-status").innerHTML = `✅ Submitted — <a href="${EVM_CHAINS[s.chain].explorer}/tx/${hash}" target="_blank" rel="noopener">${hash.slice(0, 18)}… on ${EVM_CHAINS[s.chain].name}</a>`;
+          evmSetGo(true, "Swap again");
+        } catch (e) {
+          $("evm-status").textContent = "Swap cancelled or failed: " + (e.message || e);
+          evmSetGo(true, "Swap");
+        }
+      }
+      $("evm-go").addEventListener("click", evmExecute);
 
       // ===== AI risk read =====
       async function loadAiConfig() {

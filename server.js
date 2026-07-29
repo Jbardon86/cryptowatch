@@ -1409,6 +1409,39 @@ async function mintDecimals(mint) {
 }
 
 // ===========================================================================
+// EVM SWAP — non-custodial, keyless via the OpenOcean aggregator
+// ===========================================================================
+// Same non-custodial model as the Solana swap: the server only fetches a quote
+// and builds an UNSIGNED transaction; the user's MetaMask signs and sends it.
+// OpenOcean is a keyless DEX aggregator (no API key). `amount` is in HUMAN units
+// (e.g. "0.5" = 0.5 ETH). Native token = the 0xEeee… placeholder. ERC-20 sells
+// need a one-time allowance to the router, checked via /evm/allowance.
+const OO = "https://open-api.openocean.finance/v4";
+const OO_CHAINS = { eth: "eth", ethereum: "eth", base: "base", bsc: "bsc" };
+const EVM_NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+
+async function ooGasPrice(chain) {
+  try {
+    const r = await fetch(`${OO}/${chain}/gasPrice`, { headers: { Accept: "application/json" } });
+    const j = await r.json();
+    const gp = j?.data?.standard?.legacyGasPrice ?? j?.data?.base;
+    return gp != null ? String(gp) : "5000000000";
+  } catch { return "5000000000"; }
+}
+async function ooSwapCall(chain, kind, params) {
+  const gasPrice = await ooGasPrice(chain);
+  const qs = new URLSearchParams({ ...params, gasPrice }).toString();
+  const r = await fetch(`${OO}/${chain}/${kind}?${qs}`, { headers: { Accept: "application/json" } });
+  const j = await r.json();
+  if (j.code !== 200) throw new Error(j.error || j.message || `OpenOcean ${kind} ${j.code}`);
+  return j.data;
+}
+const SEL_ALLOWANCE = "0xdd62ed3e";
+function allowanceData(owner, spender) {
+  return SEL_ALLOWANCE + owner.toLowerCase().replace(/^0x/, "").padStart(64, "0") + spender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+}
+
+// ===========================================================================
 // AI — plain-English risk verdict via Claude (optional key)
 // ===========================================================================
 // Turns the raw on-chain safety signals into a short human risk read. Key is
@@ -1789,6 +1822,37 @@ const server = http.createServer((req, res) => {
     if (!mint) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "mint required" })); return; }
     mintDecimals(mint)
       .then((d) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ mint, decimals: d })); })
+      .catch((e) => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
+    return;
+  }
+
+  if (url.pathname === "/evm/quote") {
+    const chain = OO_CHAINS[url.searchParams.get("chain")];
+    const inTok = url.searchParams.get("in"), outTok = url.searchParams.get("out"), amount = url.searchParams.get("amount");
+    if (!chain || !inTok || !outTok || !amount) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "chain, in, out, amount required" })); return; }
+    ooSwapCall(chain, "quote", { inTokenAddress: inTok, outTokenAddress: outTok, amount })
+      .then((d) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(d)); })
+      .catch((e) => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
+    return;
+  }
+
+  if (url.pathname === "/evm/swap") {
+    const chain = OO_CHAINS[url.searchParams.get("chain")];
+    const inTok = url.searchParams.get("in"), outTok = url.searchParams.get("out"), amount = url.searchParams.get("amount");
+    const slippage = url.searchParams.get("slippage") || "1", account = url.searchParams.get("account");
+    if (!chain || !inTok || !outTok || !amount || !account) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "chain, in, out, amount, account required" })); return; }
+    ooSwapCall(chain, "swap", { inTokenAddress: inTok, outTokenAddress: outTok, amount, slippage, account })
+      .then((d) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(d)); })
+      .catch((e) => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
+    return;
+  }
+
+  if (url.pathname === "/evm/allowance") {
+    const net = url.searchParams.get("chain");
+    const token = url.searchParams.get("token"), owner = url.searchParams.get("owner"), spender = url.searchParams.get("spender");
+    if (!EVM_RPC[net] || !token || !owner || !spender) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "chain(eth/base/bsc), token, owner, spender required" })); return; }
+    evmCall(net, token, allowanceData(owner, spender))
+      .then((a) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ allowance: a == null ? null : a.toString() })); })
       .catch((e) => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
     return;
   }

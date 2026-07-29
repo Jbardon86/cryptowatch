@@ -121,8 +121,12 @@ Turn a spotted token into a trade without leaving the app. Connect **Phantom**,
 pick Buy/Sell + amount + max slippage, see a live Jupiter quote (output, price
 impact, min received, hops). The server only fetches routes and builds an
 **unsigned** transaction; your Phantom wallet signs and sends it. Solscan link on
-submit. **The server never holds keys, signs, or sends funds.** (EVM swaps via
-0x/1inch + MetaMask are the next stage.)
+submit. **The server never holds keys, signs, or sends funds.**
+
+**EVM swaps** (ETH / Base / BNB Chain) work the same way via **MetaMask** and the
+**keyless OpenOcean** aggregator: Buy/Sell, live quote, one-time ERC-20 approval,
+automatic chain-switching. The Swap button on a coin's on-chain contract rows
+opens it. Non-custodial and keyless, same as the Solana side.
 
 ### 🔗 Unified asset page (the capstone)
 Click any coin — from Markets, a News `$SYMBOL` tag, or the Research board — and
@@ -202,7 +206,6 @@ There's a fuller engineering handoff in [HANDOFF.md](HANDOFF.md).
 
 ## Roadmap
 
-- **EVM swaps** (0x/1inch + MetaMask) — the second half of the swap feature.
 - **Structured funding/unlock calendar** — needs a paid data key (DefiLlama Pro /
   CryptoRank / Token Unlocks); the hooks are staged.
 - **Persist the launch stream** for backtesting which signals preceded winners vs.

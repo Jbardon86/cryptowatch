@@ -192,6 +192,7 @@ wiring, and goes live with the owner's own key. Each item notes which below.
 | `GET /dev/repo?repo=owner/name` | One repo's activity (unified asset page) |
 | `GET /asset?id=` | Coin detail — now also returns `githubRepo`, `snapshotSpace`, `contracts` |
 | `GET /swap/quote`, `GET /swap/mint`, `POST /swap/build` | Jupiter swap (Solana) |
+| `GET /evm/quote`, `GET /evm/swap`, `GET /evm/allowance` | OpenOcean EVM swap (ETH/Base/BSC), keyless |
 
 ---
 
@@ -253,9 +254,14 @@ filters). All reuse the one optional Claude key and hold the no-advice guardrail
 **✅ Real-time layer.** Coin pages carry a live **Coinbase WS** price + trade tape
 (client-side; see §3). This was the "live trades" ask.
 
+**✅ EVM swaps.** Built (MetaMask + the keyless **OpenOcean** aggregator, since
+0x/1inch now need keys). Buy/Sell on ETH/Base/BSC, live quote, ERC-20 approval
+flow (allowance check → approve → swap), chain auto-switch. Entry = a "Swap"
+button on the asset page's on-chain rows for EVM contracts (`openEvmSwap`).
+Quote/build pipeline verified live; signing needs a real MetaMask.
+
 **Other staged items (NOT built):**
 - **Structured funding/unlock feeds** — the paid-key half of pillar 4 (see above).
-- **EVM swaps** (0x/1inch + MetaMask, token approvals, chain switching) — the second half of the swap feature.
 - **Persist launches** for backtesting which signals preceded winners vs rugs.
 - **Sub-second launch latency** via a paid provider / node WebSocket (Helius/Birdeye/Bitquery) — also fixes public-RPC throttling.
 
