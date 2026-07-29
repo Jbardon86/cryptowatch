@@ -10,7 +10,7 @@ services:
     # rootDir: cryptowatch
     buildCommand: npm install
     startCommand: node server.js
-    healthCheckPath: /
+    healthCheckPath: /healthz # unauthenticated 200; stays healthy even with AUTH_PASS set
     autoDeploy: true
     envVars:
       - key: NODE_VERSION

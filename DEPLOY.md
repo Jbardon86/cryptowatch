@@ -68,9 +68,19 @@ reset on each deploy unless you attach a disk (§4).
   fund AI publicly, just don't set `ANTHROPIC_API_KEY` — the AI features stay off
   and everything else works.
 - **😴 Free tier sleeps.** A Render **free** web service spins down after ~15 min
-  of no traffic and cold-starts (~30–50s) on the next hit. Because CryptoWatch
-  polls live feeds, **the launch radar stops while it's asleep** and the in-memory
-  buffer resets on wake. For an always-on radar use the **Starter** plan (~$7/mo).
+  of no *inbound* traffic and cold-starts (~30–50s) on the next hit. Because
+  CryptoWatch polls live feeds, **the launch radar stops while it's asleep** and
+  the in-memory buffer resets on wake.
+  - **Built-in keep-alive:** on Render the server auto-pings its own `/healthz`
+    every 10 min (using `RENDER_EXTERNAL_URL`, which Render sets automatically),
+    so once it's awake it stays awake. This keeps a free instance running ~24/7,
+    which uses most of the free monthly instance-hours (~730 of 750) — fine for a
+    single service. It keeps an awake instance warm but can't wake a fully-slept
+    one; a free external uptime monitor (UptimeRobot, cron-job.org) hitting
+    `/healthz` adds that. For a guaranteed always-on radar, the **Starter** plan
+    (~$7/mo) is the clean answer.
+  - Health check path is **`/healthz`** (unauthenticated 200) so the service stays
+    healthy even with `AUTH_PASS` set.
 - **💾 Ephemeral filesystem.** `config.json` (alert rules + delivery config) is
   wiped on every deploy/restart. Use env vars for API keys (durable). To persist
   rules/delivery, attach a **disk** and set `CONFIG_PATH=/data/config.json`

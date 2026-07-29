@@ -1565,6 +1565,15 @@ function authOk(req) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  // Health check — intentionally BEFORE the auth gate so platform probes and the
+  // keep-alive ping always get a 200 (a 401 here would make the host think the
+  // service is unhealthy once AUTH_PASS is set). Returns no sensitive data.
+  if (url.pathname === "/healthz") {
+    res.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+    res.end("ok");
+    return;
+  }
+
   if (!authOk(req)) {
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="CryptoWatch"', "Content-Type": "text/plain" });
     res.end("Authentication required.");
@@ -1993,6 +2002,22 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// ---- Keep-alive (free-tier hosts sleep after ~15m with no INBOUND traffic) --
+// Render spins a free service down on inbound-idle — which pauses the live feed.
+// When the host tells us our public URL (Render sets RENDER_EXTERNAL_URL), ping
+// our own /healthz on an interval so we always look "trafficked". No-op locally
+// (no such env var), so it never runs during local dev. Note: this keeps an
+// already-awake instance warm; it can't wake one that has fully slept — an
+// external uptime monitor can do that too if you want belt-and-suspenders.
+function startKeepAlive() {
+  const base = process.env.RENDER_EXTERNAL_URL || process.env.KEEPALIVE_URL;
+  if (!base) return;
+  const target = base.replace(/\/$/, "") + "/healthz";
+  const ping = () => fetch(target).catch(() => {});
+  setInterval(ping, 10 * 60 * 1000); // every 10 min, comfortably under the ~15m window
+  console.log(`Keep-alive: pinging ${target} every 10m`);
+}
+
 loadConfig();
 server.listen(PORT, () => {
   console.log(`CryptoWatch running -> http://localhost:${PORT}`);
@@ -2000,4 +2025,5 @@ server.listen(PORT, () => {
   pollTrending();
   setInterval(pollNew, NEW_POLL_MS);
   setInterval(pollTrending, TREND_POLL_MS);
+  startKeepAlive();
 });
