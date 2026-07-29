@@ -193,6 +193,7 @@ wiring, and goes live with the owner's own key. Each item notes which below.
 | `GET /asset?id=` | Coin detail — now also returns `githubRepo`, `snapshotSpace`, `contracts` |
 | `GET /swap/quote`, `GET /swap/mint`, `POST /swap/build` | Jupiter swap (Solana) |
 | `GET /evm/quote`, `GET /evm/swap`, `GET /evm/allowance` | OpenOcean EVM swap (ETH/Base/BSC), keyless |
+| `GET /backtest` | Backtest analytics — discovery signal → winner/rug outcome |
 
 ---
 
@@ -259,6 +260,14 @@ filters). All reuse the one optional Claude key and hold the no-advice guardrail
 flow (allowance check → approve → swap), chain auto-switch. Entry = a "Swap"
 button on the asset page's on-chain rows for EVM contracts (`openEvmSwap`).
 Quote/build pipeline verified live; signing needs a real MetaMask.
+
+**✅ Backtest store.** The radar now persists the launch stream (🧪 Backtest tab):
+a discovery snapshot per launch + re-observations (trending + a small aged-launch
+outcome re-check within the rate budget), bounded in memory and rewritten to
+`DATA_DIR/launches.jsonl` every 3 min. `/backtest` correlates discovery signals
+(risk bucket, "no sells", liquidity) with the observed outcome (grew / flat /
+rugged by liquidity trajectory). On Render, mount a disk and set `DATA_DIR` to
+keep history across deploys (the store is gitignored `data/`).
 
 **Other staged items (NOT built):**
 - **Structured funding/unlock feeds** — the paid-key half of pillar 4 (see above).

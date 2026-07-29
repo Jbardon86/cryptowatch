@@ -475,6 +475,27 @@
       }
       #evmSwapOverlay.show { display: flex; }
       .side-btn[data-eside="sell"].active { background: #3a2330; border-color: #7e3350; }
+      /* backtest */
+      #backtestView { display: none; padding: 18px 20px 80px; max-width: 1100px; }
+      .bt-corr { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 20px; }
+      .bt-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+      .bt-row .bl { width: 150px; font-size: 12.5px; }
+      .bt-row .bn { width: 34px; text-align: right; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+      .bt-bar { flex: 1; height: 16px; border-radius: 4px; overflow: hidden; display: flex; background: var(--panel2); }
+      .bt-bar > span { height: 100%; }
+      .bt-bar .bg { background: var(--green); }
+      .bt-bar .bf { background: #39445a; }
+      .bt-bar .br { background: var(--red); }
+      .bt-legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin: 4px 0 14px; }
+      .bt-legend b { font-weight: 700; }
+      .bt-table { width: 100%; border-collapse: collapse; }
+      .bt-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); padding: 9px 10px; border-bottom: 1px solid var(--border); }
+      .bt-table td { padding: 9px 10px; border-bottom: 1px solid #171d29; font-size: 13px; vertical-align: middle; }
+      .bt-out { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 5px; }
+      .bt-out.grew { background: #143a2a; color: var(--green); }
+      .bt-out.rugged { background: #3a1620; color: #ff9db0; }
+      .bt-out.flat { background: var(--panel2); color: var(--muted); }
+      .bt-arrow { color: var(--muted); }
     </style>
   </head>
   <body>
@@ -487,6 +508,7 @@
         <div class="tab" data-tab="news">📰 News</div>
         <div class="tab" data-tab="research">🧠 Research</div>
         <div class="tab" data-tab="signals">📡 Signals</div>
+        <div class="tab" data-tab="backtest">🧪 Backtest</div>
         <div class="tab" data-tab="swap">💱 Swap</div>
         <div class="tab" data-tab="alerts">🔔 Alerts<span class="badge-count" id="alertCount"></span></div>
       </div>
@@ -757,6 +779,25 @@
           <div class="hint" style="margin-top:12px">Sourced from clustered news (free). A precise unlock calendar (dates, amounts, % of supply) needs a paid data key — DefiLlama gated its free emissions feed; the optional-key hook is ready.</div>
         </div>
       </div>
+    </div>
+
+    <div id="backtestView">
+      <div class="rz-head"><h2>🧪 Backtest — which signals preceded winners vs. rugs</h2><button class="btn ghost" id="bt-refresh" style="margin-left:auto">↻ Refresh</button></div>
+      <div class="rz-sub" id="bt-summary">Loading…</div>
+      <div class="panel">
+        <div class="rz-card-h"><h2 style="text-transform:none;font-size:15px;color:var(--text)">Discovery signal → outcome</h2><span class="muted" style="font-size:11px">of launches we've tracked long enough to see a trajectory</span></div>
+        <div class="bt-legend"><span><b style="color:var(--green)">■</b> grew (liq ↑≥50%)</span><span><b style="color:#8a95a8">■</b> flat / decayed</span><span><b style="color:var(--red)">■</b> rugged (liq pulled)</span></div>
+        <div class="bt-corr">
+          <div><h3 class="asset-news-h">By risk score at discovery</h3><div id="bt-risk"></div></div>
+          <div><h3 class="asset-news-h">By "no sells" flag</h3><div id="bt-nosells"></div></div>
+          <div><h3 class="asset-news-h">By liquidity at discovery</h3><div id="bt-liq"></div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="rz-card-h"><h2 style="text-transform:none;font-size:15px;color:var(--text)">Recently resolved launches</h2></div>
+        <div id="bt-recent"></div>
+      </div>
+      <div class="hint">Purely observational data the radar records as it runs — <b>not financial advice</b>. Early on there's little history; it accrues over time (and survives restarts only if a persistent disk is mounted — see DEPLOY.md).</div>
     </div>
 
     <div id="assetOverlay">
@@ -1363,6 +1404,7 @@
         $("swapTabView").style.display = "none";
         $("researchView").style.display = "none";
         $("signalsView").style.display = "none";
+        $("backtestView").style.display = "none";
         // The launch filter bar + rug disclaimer only apply to New/Trending.
         const isLaunch = tab === "new" || tab === "trending";
         document.querySelector(".filters").style.display = isLaunch ? "flex" : "none";
@@ -1371,6 +1413,7 @@
         else if (tab === "news") { $("newsView").style.display = "block"; fetchNews(); }
         else if (tab === "research") { $("researchView").style.display = "block"; fetchResearch(); }
         else if (tab === "signals") { $("signalsView").style.display = "block"; fetchSignals(); }
+        else if (tab === "backtest") { $("backtestView").style.display = "block"; fetchBacktest(); }
         else if (tab === "swap") { $("swapTabView").style.display = "block"; renderSwapWallet(); }
         else if (tab === "alerts") {
           $("alertsView").style.display = "block";
@@ -2255,6 +2298,58 @@
           $("gh-token").value = ""; state.signals.dev = null;
           await loadGhConfig(); fetchDev(true);
         } catch (e) { $("gh-status").textContent = "save failed"; }
+      }
+
+      // ===== Backtest (which discovery signals preceded winners vs rugs) =====
+      let backtestBuilt = false;
+      function fetchBacktest() {
+        if (!backtestBuilt) { backtestBuilt = true; $("bt-refresh").addEventListener("click", fetchBacktest); }
+        $("bt-summary").textContent = "Loading…";
+        fetch("/backtest").then((r) => r.json()).then(renderBacktest).catch(() => { $("bt-summary").textContent = "Failed to load backtest data."; });
+      }
+      function btBar(row) {
+        const n = row.n || 0;
+        if (!n) return `<div class="bt-row"><span class="bl">${escapeHtml(row.label)}</span><span class="bn">0</span><div class="bt-bar"></div></div>`;
+        const pct = (x) => (x / n) * 100;
+        const p = (x) => Math.round((x / n) * 100);
+        return `<div class="bt-row">
+          <span class="bl">${escapeHtml(row.label)}</span>
+          <span class="bn">${n}</span>
+          <div class="bt-bar" title="${p(row.grew)}% grew · ${p(row.flat)}% flat · ${p(row.rugged)}% rugged">
+            <span class="bg" style="width:${pct(row.grew)}%"></span>
+            <span class="bf" style="width:${pct(row.flat)}%"></span>
+            <span class="br" style="width:${pct(row.rugged)}%"></span>
+          </div>
+          <span class="bn" style="color:var(--green)">${p(row.grew)}%</span>
+          <span class="bn" style="color:var(--red)">${p(row.rugged)}%</span>
+        </div>`;
+      }
+      function renderBacktest(d) {
+        if (d.error) { $("bt-summary").textContent = "Backtest unavailable."; return; }
+        const since = d.since ? new Date(d.since).toLocaleString() : "—";
+        $("bt-summary").innerHTML = `Tracking <b>${(d.tracked || 0).toLocaleString()}</b> launches · <b>${(d.withTrajectory || 0).toLocaleString()}</b> resolved with a trajectory · ${(d.events || 0).toLocaleString()} observations since ${since}.` +
+          (d.withTrajectory < 5 ? ` <span style="color:var(--amber)">Little history yet — leave the radar running and check back.</span>` : "");
+        $("bt-risk").innerHTML = (d.byRisk || []).map(btBar).join("");
+        $("bt-nosells").innerHTML = (d.byNoSells || []).map(btBar).join("");
+        $("bt-liq").innerHTML = (d.byLiq || []).map(btBar).join("");
+        const rows = (d.recent || []).map((r) => {
+          const liqArrow = `${fmtUsd(r.liq0)} <span class="bt-arrow">→</span> ${fmtUsd(r.liq1)}`;
+          const pxCh = r.price0 > 0 ? ((r.price1 - r.price0) / r.price0) * 100 : null;
+          const px = pxCh == null ? "—" : `<span class="${pxCh >= 0 ? "pos" : "neg"}">${(pxCh >= 0 ? "+" : "") + pxCh.toFixed(0)}%</span>`;
+          return `<tr>
+            <td>${escapeHtml(r.name)}</td>
+            <td><span class="chain">${escapeHtml(r.net)}</span></td>
+            <td class="num">${r.spanMin}m</td>
+            <td class="score ${scoreClass(r.risk0)}">${r.risk0}</td>
+            <td>${r.noSells0 ? '<span style="color:var(--amber)">no sells</span>' : '<span class="muted">ok</span>'}</td>
+            <td class="mkt-num">${liqArrow}</td>
+            <td class="num">${px}</td>
+            <td><span class="bt-out ${r.outcome}">${r.outcome}</span></td>
+          </tr>`;
+        }).join("");
+        $("bt-recent").innerHTML = rows
+          ? `<table class="bt-table"><thead><tr><th>Launch</th><th>Chain</th><th class="num">Age</th><th>Risk@t0</th><th>Flow@t0</th><th>Liquidity t0→now</th><th class="num">Price</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table>`
+          : '<div class="muted" style="font-size:13px">No resolved launches yet — trajectories appear once a launch has been observed over at least ~10 minutes.</div>';
       }
 
       // ===== Swap (Solana · Jupiter · non-custodial) =====

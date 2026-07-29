@@ -745,6 +745,7 @@ async function pollNew() {
         seen.set(p.id, pool);
         order.unshift(p.id);
         fresh.push(pool);
+        btRecord("new", pool); // discovery snapshot for backtesting
       }
     }
     // Trim buffer
@@ -772,11 +773,122 @@ async function pollTrending() {
     const json = await gtGet(`${GT}/networks/trending_pools`);
     const list = (json.data || []).map(normalize);
     trending.clear();
-    for (const p of list) trending.set(p.id, p);
+    for (const p of list) { trending.set(p.id, p); btRecord("seen", p); }
     broadcast("trending", list);
   } catch (e) {
     if (e.status !== 429) console.error("pollTrending error:", e.message);
   }
+}
+
+// ===========================================================================
+// BACKTEST STORE — persist the launch stream to study which early signals
+// preceded winners vs rugs. Bounded in memory + periodic file rewrite (cheap;
+// no per-event disk churn). On an ephemeral host (Render) point DATA_DIR at a
+// mounted disk to keep history across deploys. Purely observational — the
+// outcome pass re-reads a small batch of aged launches within the rate budget.
+// ===========================================================================
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const BT_FILE = path.join(DATA_DIR, "launches.jsonl");
+const BT_MAX = 20000;
+let btEvents = []; // { t, e, id, net, name, addr, price, liq, vol, buys, sells, risk, noSells, createdAt }
+let btDirty = false;
+const btLastRec = new Map(); // id -> last-recorded ms (throttles "seen")
+const btOutcomeChecked = new Set();
+
+function btRecord(event, p) {
+  if (!p || !p.id) return;
+  const now = Date.now();
+  if (event === "seen") {
+    const last = btLastRec.get(p.id) || 0;
+    if (now - last < 5 * 60 * 1000) return; // at most one re-observation / 5 min per pool
+  }
+  btLastRec.set(p.id, now);
+  btEvents.push({
+    t: now, e: event, id: p.id, net: p.network, name: p.name, addr: p.poolAddress,
+    price: p.priceUsd, liq: p.liquidityUsd, vol: p.volumeH1,
+    buys: p.buysH1, sells: p.sellsH1, risk: p.riskScore,
+    noSells: (p.flags || []).some((f) => f.includes("No sells")), createdAt: p.createdAt,
+  });
+  if (btEvents.length > BT_MAX) btEvents.splice(0, btEvents.length - BT_MAX);
+  btDirty = true;
+}
+function btLoad() {
+  try {
+    const lines = fs.readFileSync(BT_FILE, "utf8").split("\n").filter(Boolean);
+    for (const l of lines.slice(-BT_MAX)) { try { btEvents.push(JSON.parse(l)); } catch {} }
+    for (const ev of btEvents) btLastRec.set(ev.id, ev.t);
+    console.log(`Backtest: loaded ${btEvents.length} events from ${BT_FILE}`);
+  } catch (e) { if (e.code !== "ENOENT") console.error("btLoad:", e.message); }
+}
+function btSave() {
+  if (!btDirty) return;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(BT_FILE, btEvents.map((x) => JSON.stringify(x)).join("\n") + "\n");
+    btDirty = false;
+  } catch (e) { console.error("btSave:", e.message); }
+}
+// Re-read a small batch of aged launches to capture their outcome (did liquidity
+// survive/grow, or get pulled?). Capped per pass so it stays within the budget.
+async function btOutcomePass() {
+  const now = Date.now();
+  const seen = new Set(), cands = [];
+  for (const ev of btEvents) {
+    if (ev.e !== "new" || seen.has(ev.id) || btOutcomeChecked.has(ev.id)) continue;
+    seen.add(ev.id);
+    if (!ev.addr || !ev.net) continue;
+    const ageMin = (now - new Date(ev.createdAt || ev.t).getTime()) / 60000;
+    if (ageMin >= 45 && ageMin <= 300) cands.push(ev);
+  }
+  for (const ev of cands.slice(0, 4)) {
+    btOutcomeChecked.add(ev.id);
+    try {
+      const j = await gtGet(`${GT}/networks/${ev.net}/pools/${ev.addr}`);
+      if (j && j.data) {
+        const pool = normalize(j.data);
+        btLastRec.delete(pool.id); // force-record even if recently seen
+        btRecord("outcome", pool);
+      }
+    } catch { /* pool may be gone (itself a signal) — skip */ }
+  }
+}
+// Correlate discovery-time signals with the trajectory we observed.
+function btAnalytics() {
+  const byId = new Map();
+  for (const ev of btEvents) { if (!byId.has(ev.id)) byId.set(ev.id, []); byId.get(ev.id).push(ev); }
+  const rows = [];
+  for (const [id, evs] of byId) {
+    evs.sort((a, b) => a.t - b.t);
+    const t0 = evs[0], t1 = evs[evs.length - 1];
+    const spanMin = (t1.t - t0.t) / 60000;
+    if (evs.length < 2 || spanMin < 10) continue; // need a real trajectory
+    const liq0 = t0.liq || 0, liq1 = t1.liq || 0;
+    const liqRatio = liq0 > 0 ? liq1 / liq0 : null;
+    let outcome = "flat";
+    if (liq1 < Math.max(500, liq0 * 0.25)) outcome = "rugged";
+    else if (liqRatio != null && liqRatio >= 1.5) outcome = "grew";
+    rows.push({ id, net: t0.net, name: t0.name, risk0: t0.risk || 0, liq0, liq1, price0: t0.price, price1: t1.price, noSells0: !!t0.noSells, spanMin: Math.round(spanMin), outcome, obs: evs.length, lastT: t1.t });
+  }
+  const dist = (sub) => ({ n: sub.length, grew: sub.filter((r) => r.outcome === "grew").length, flat: sub.filter((r) => r.outcome === "flat").length, rugged: sub.filter((r) => r.outcome === "rugged").length });
+  return {
+    tracked: byId.size, withTrajectory: rows.length, events: btEvents.length,
+    since: btEvents.length ? btEvents[0].t : null,
+    byRisk: [
+      { label: "Risk 60–100", ...dist(rows.filter((r) => r.risk0 >= 60)) },
+      { label: "Risk 40–59", ...dist(rows.filter((r) => r.risk0 >= 40 && r.risk0 < 60)) },
+      { label: "Risk 0–39", ...dist(rows.filter((r) => r.risk0 < 40)) },
+    ],
+    byNoSells: [
+      { label: "No sells at discovery", ...dist(rows.filter((r) => r.noSells0)) },
+      { label: "Had sells at discovery", ...dist(rows.filter((r) => !r.noSells0)) },
+    ],
+    byLiq: [
+      { label: "Liq ≥ $25k", ...dist(rows.filter((r) => r.liq0 >= 25000)) },
+      { label: "Liq $5k–$25k", ...dist(rows.filter((r) => r.liq0 >= 5000 && r.liq0 < 25000)) },
+      { label: "Liq < $5k", ...dist(rows.filter((r) => r.liq0 < 5000)) },
+    ],
+    recent: rows.sort((a, b) => b.lastT - a.lastT).slice(0, 40),
+  };
 }
 
 // ===========================================================================
@@ -2141,6 +2253,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === "/backtest") {
+    try {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(btAnalytics()));
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   // Static files
   let file = url.pathname === "/" ? "/index.html" : url.pathname;
   const full = path.join(__dirname, "public", path.normalize(file));
@@ -2175,6 +2298,7 @@ function startKeepAlive() {
 }
 
 loadConfig();
+btLoad();
 server.listen(PORT, () => {
   console.log(`CryptoWatch running -> http://localhost:${PORT}`);
   pollNew();
@@ -2182,4 +2306,6 @@ server.listen(PORT, () => {
   setInterval(pollNew, NEW_POLL_MS);
   setInterval(pollTrending, TREND_POLL_MS);
   startKeepAlive();
+  setInterval(btSave, 180000);        // persist backtest store every 3 min
+  setInterval(btOutcomePass, 120000); // re-check a small batch of aged launches
 });

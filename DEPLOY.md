@@ -81,10 +81,11 @@ reset on each deploy unless you attach a disk (§4).
     (~$7/mo) is the clean answer.
   - Health check path is **`/healthz`** (unauthenticated 200) so the service stays
     healthy even with `AUTH_PASS` set.
-- **💾 Ephemeral filesystem.** `config.json` (alert rules + delivery config) is
-  wiped on every deploy/restart. Use env vars for API keys (durable). To persist
-  rules/delivery, attach a **disk** and set `CONFIG_PATH=/data/config.json`
-  (the `disk` block in `render.yaml` is ready to uncomment).
+- **💾 Ephemeral filesystem.** `config.json` (alert rules + delivery config) and
+  the **backtest store** (`data/launches.jsonl`) are wiped on every deploy/restart.
+  Use env vars for API keys (durable). To persist rules/delivery **and** backtest
+  history, attach a **disk** (the `disk` block in `render.yaml` is ready to
+  uncomment) and set `CONFIG_PATH=/data/config.json` and `DATA_DIR=/data`.
 - **⏱ Shared datacenter IP.** GeckoTerminal / CoinGecko / GitHub free tiers are
   IP-rate-limited; a busy Render IP can throttle sooner. The free CoinGecko Demo
   key and a GitHub token help. (This is the same free-tier reality noted in

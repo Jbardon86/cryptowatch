@@ -30,10 +30,13 @@ services:
         sync: false
       - key: GITHUB_TOKEN # optional; lifts the 60 req/hr GitHub limit for dev activity
         sync: false
-      # --- Optional: persist alert rules + delivery config across deploys by
-      #     attaching a disk and pointing CONFIG_PATH at it (see the `disk` block). ---
+      # --- Optional: persist alert rules/delivery config AND the backtest store
+      #     across deploys by attaching a disk (uncomment the `disk` block below)
+      #     and pointing CONFIG_PATH + DATA_DIR at it. ---
       # - key: CONFIG_PATH
       #   value: /data/config.json
+      # - key: DATA_DIR
+      #   value: /data
     # disk:
     #   name: cryptowatch-data
     #   mountPath: /data

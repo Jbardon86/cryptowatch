@@ -10,3 +10,6 @@ package-lock.json
 # Local Claude Code / editor tooling (has machine-specific absolute paths)
 .claude/
 .DS_Store
+
+# Backtest store (persisted launch stream — local/host data, not source)
+data/

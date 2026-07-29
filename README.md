@@ -116,6 +116,13 @@ Straight-from-the-source data:
   unlock/vesting mentions). A *structured* rounds/unlock calendar needs a paid data
   key — the hook is staged.
 
+### 🧪 Backtest
+The radar **persists the launch stream** — a discovery snapshot of every launch
+plus re-observations over time — then correlates **discovery-time signals** (risk
+score, "no sells" flag, liquidity depth) with the **observed outcome** (did
+liquidity grow, stay flat, or get pulled?). Purely observational; history accrues
+as it runs. On an ephemeral host, mount a disk and set `DATA_DIR` to keep it.
+
 ### 💱 Swap (non-custodial — Solana via Jupiter)
 Turn a spotted token into a trade without leaving the app. Connect **Phantom**,
 pick Buy/Sell + amount + max slippage, see a live Jupiter quote (output, price
@@ -208,7 +215,5 @@ There's a fuller engineering handoff in [HANDOFF.md](HANDOFF.md).
 
 - **Structured funding/unlock calendar** — needs a paid data key (DefiLlama Pro /
   CryptoRank / Token Unlocks); the hooks are staged.
-- **Persist the launch stream** for backtesting which signals preceded winners vs.
-  rugs.
 - **Sub-second launch latency** via a paid provider / node WebSocket (Helius /
-  Birdeye / Bitquery).
+  Birdeye / Bitquery) — also makes the launch feed immune to shared-IP throttling.
