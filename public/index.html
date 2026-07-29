@@ -442,6 +442,31 @@
       .gov-badge { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 20px; }
       .gov-badge.active { background: #143a2a; color: var(--green); border: 1px solid #1f5b40; }
       .gov-badge.closed { background: var(--panel2); color: var(--muted); border: 1px solid var(--border); }
+      /* live market feed (Coinbase WebSocket) */
+      .live-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+      .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+      .live-dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+      .live-dot.off { background: var(--red); }
+      .live-price { font-family: var(--mono); font-size: 22px; font-weight: 800; }
+      .live-price.up { color: var(--green); }
+      .live-price.down { color: var(--red); }
+      .live-src { color: var(--muted); font-size: 11px; font-weight: 400; }
+      .trades { margin-top: 6px; }
+      .trade { display: flex; align-items: center; gap: 10px; padding: 3px 0; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid #12161f; }
+      .trade .t-time { color: var(--muted); width: 66px; }
+      .trade .t-price { width: 116px; text-align: right; }
+      .trade .t-size { flex: 1; text-align: right; color: var(--muted); }
+      .trade .t-side { width: 40px; text-align: right; font-weight: 700; }
+      .trade.buy .t-price, .trade.buy .t-side { color: var(--green); }
+      .trade.sell .t-price, .trade.sell .t-side { color: var(--red); }
+      .live-note { color: var(--muted); font-size: 12px; padding: 6px 0; }
+      /* AI explainer + screener */
+      .ai-explain-out { margin-top: 8px; padding: 10px 12px; background: #1a1530; border: 1px solid #3a2c5e; border-radius: 8px; font-size: 13px; line-height: 1.55; color: #d9cff2; }
+      .ai-explain-out .ax-tag { color: #b39dff; font-weight: 700; }
+      .screener { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid #3a2c5e; border-radius: 10px; }
+      .screener input { flex: 1; min-width: 220px; }
+      .screener .sc-note { flex-basis: 100%; color: #c9b3ff; font-size: 12px; margin-top: 2px; }
+      .screener .hint { flex-basis: 100%; }
     </style>
   </head>
   <body>
@@ -612,6 +637,14 @@
         <button class="btn ghost" id="cg-clear">Clear</button>
         <span class="cg-status muted" id="cg-status"></span>
         <span class="hint">A free Demo key (coingecko.com/en/api) lifts the rate limit. Stored locally, gitignored, never sent to the browser.</span>
+      </div>
+      <div class="screener" id="screener">
+        <span class="muted" style="font-size:12px;font-weight:600">🧠 AI screen</span>
+        <input id="screen-q" placeholder="describe what you're looking for — e.g. small-cap coins under $50M with high volume" autocomplete="off" />
+        <button class="btn" id="screen-go">Screen</button>
+        <button class="btn ghost" id="screen-clear">Clear</button>
+        <span class="sc-note" id="screen-note"></span>
+        <span class="hint">Turns plain English into the cap/volume/sort filters below (needs a Claude key). Filters the loaded page + sorts the whole universe.</span>
       </div>
       <table class="mkt-table">
         <thead>
@@ -811,6 +844,9 @@
       state.aiWhy = new Map();      // news cluster link -> AI "why it matters"
       state.research = null;        // { narratives, topAssets, mood } from /narratives
       state.signals = { built: false, section: "gov", gov: null, dev: null };
+      state.liveWS = null;          // live Coinbase WebSocket for the open asset
+      state.liveTimer = null;       // "no feed yet" timeout
+      state.aiExplain = new Map();  // coin id -> AI asset explanation
       function saveWatch() { try { localStorage.setItem("cw_watch", JSON.stringify([...state.watch])); } catch {} }
       function toggleWatch(id) { if (state.watch.has(id)) state.watch.delete(id); else state.watch.add(id); saveWatch(); }
       const star = (id) => `<span class="watch-star${state.watch.has(id) ? " on" : ""}" data-wid="${id}">${state.watch.has(id) ? "★" : "☆"}</span>`;
@@ -1357,6 +1393,36 @@
         }
         if (!state.markets.length) await loadMarketsPage(state.marketPage || 1);
         else { renderMarkets(); renderPagination(); }
+        buildScreener();
+      }
+      // ---- natural-language screener (AI → the cap/volume/sort filters) ----
+      let screenerBuilt = false;
+      function buildScreener() {
+        if (screenerBuilt) return; screenerBuilt = true;
+        $("screen-go").addEventListener("click", runScreen);
+        $("screen-clear").addEventListener("click", () => { $("screen-q").value = ""; $("screen-note").textContent = ""; });
+        $("screen-q").addEventListener("keydown", (e) => { if (e.key === "Enter") runScreen(); });
+      }
+      async function runScreen() {
+        const q = $("screen-q").value.trim(); if (!q) return;
+        const note = $("screen-note"), btn = $("screen-go");
+        btn.disabled = true; btn.textContent = "thinking…"; note.textContent = "";
+        try {
+          const r = await (await fetch("/ai/screen", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }),
+          })).json();
+          if (r.error === "no_key") note.textContent = "Add a Claude API key (Alerts ▸ AI risk analysis) to use the AI screener.";
+          else if (r.filter) {
+            $("mkt-mincap").value = r.filter.minCap != null ? r.filter.minCap : "";
+            $("mkt-maxcap").value = r.filter.maxCap != null ? r.filter.maxCap : "";
+            $("mkt-minvol").value = r.filter.minVol != null ? r.filter.minVol : "";
+            document.querySelectorAll(".tierbtn").forEach((x) => x.classList.remove("active"));
+            readFilter();
+            note.textContent = r.note || "Filters applied.";
+            applyServerOrder(r.filter.order); // reorder universe + reload page 1 + renderMarkets applies the cap/vol filter
+          } else note.textContent = "Couldn't parse that — try phrasing it around market cap, volume, or sort.";
+        } catch (e) { note.textContent = "Screen failed — try again."; }
+        btn.disabled = false; btn.textContent = "Screen";
       }
       // Discrete pages: each fetch REPLACES the current page's coins.
       async function loadMarketsPage(page) {
@@ -1605,9 +1671,12 @@
           const a = await (await fetch("/asset?id=" + encodeURIComponent(id))).json();
           if (a.error) { $("asset-body").innerHTML = '<div class="empty">Couldn\'t load (rate-limited). Try again shortly.</div>'; return; }
           renderAsset(a);
+          state.currentAsset = a;
           // Fusion blocks (Pillar-capstone) — on-chain/trade is synchronous;
           // dev activity + governance fetch in parallel, independent of news.
           renderAssetOnchain(a);
+          startLive(a);            // real-time price + trades (Coinbase WS)
+          renderExplain(a);        // AI "explain this asset" button
           fetchAssetDev(a);
           fetchAssetGov(a);
           // per-asset news + chart markers (news ↔ data fusion)
@@ -1640,6 +1709,7 @@
           <div class="asset-price">${fmtPrice2(a.price)}</div>
           <div>24h ${chg(a.change24h)} &nbsp;·&nbsp; 7d ${chg(a.change7d)} &nbsp;·&nbsp; 30d ${chg(a.change30d)}</div>
           <div id="asset-chart-wrap">${bigChart(a.chart, { start: a.chartStart, end: a.chartEnd })}</div>
+          <div id="asset-live"></div>
           <div class="stat-grid">
             ${stat("Market cap", fmtBig(a.marketCap))}
             ${stat("Volume 24h", fmtBig(a.volume))}
@@ -1651,6 +1721,7 @@
             ${stat("24h low", fmtPrice2(a.low24h))}
           </div>
           ${a.description ? `<div class="asset-desc">${escapeHtml(a.description)}…</div>` : ""}
+          <div id="asset-explain"></div>
           <div class="asset-links">
             ${a.homepage ? `<a href="${a.homepage}" target="_blank" rel="noopener">Website ↗</a>` : ""}
             ${a.twitter ? `<a href="${a.twitter}" target="_blank" rel="noopener">Twitter/X ↗</a>` : ""}
@@ -1726,7 +1797,94 @@
             `<a class="asset-news-item" href="https://snapshot.org/#/${encodeURIComponent(a.snapshotSpace)}" target="_blank" rel="noopener"><span class="ani-meta" style="color:var(--accent)">All proposals on Snapshot ↗</span></a>`;
         } catch (e) { el.innerHTML = ""; }
       }
-      function closeAsset() { $("assetOverlay").classList.remove("show"); }
+      // ---- AI "explain this asset" ----
+      function renderExplain(a) {
+        const el = $("asset-explain"); if (!el) return;
+        if (!state.aiEnabled) { el.innerHTML = ""; return; }
+        if (state.aiExplain.has(a.id)) {
+          el.innerHTML = `<div class="ai-explain-out"><span class="ax-tag">🧠 What is ${escapeHtml((a.symbol || "").toUpperCase())}?</span> ${escapeHtml(state.aiExplain.get(a.id))}</div>`;
+          return;
+        }
+        el.innerHTML = `<button class="ai-btn" id="explain-btn">🧠 Explain this asset</button>`;
+        $("explain-btn").addEventListener("click", () => runExplain(a));
+      }
+      async function runExplain(a) {
+        const btn = $("explain-btn"); if (btn) { btn.disabled = true; btn.textContent = "🧠 thinking…"; }
+        // best-effort context from what's already rendered in the modal
+        const dev = $("asset-dev") ? $("asset-dev").innerText.replace(/\s+/g, " ").replace(/DEVELOPER ACTIVITY/i, "").trim().slice(0, 150) : "";
+        const gov = $("asset-gov") && $("asset-gov").querySelector(".asset-news-h") ? $("asset-gov").querySelector(".asset-news-h").textContent : "";
+        const news = [...document.querySelectorAll("#asset-news .ani-title")].slice(0, 4).map((n) => n.textContent);
+        try {
+          const r = await (await fetch("/ai/explain", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: a.id, symbol: a.symbol, name: a.name, description: a.description, marketCap: a.marketCap, rank: a.rank, change24h: a.change24h, change7d: a.change7d, dev, gov, news }),
+          })).json();
+          if (r.explanation) { state.aiExplain.set(a.id, r.explanation); renderExplain(a); }
+          else if (r.error === "no_key") { if (btn) { btn.textContent = "🧠 add a Claude key first (Alerts ▸ AI)"; btn.disabled = false; } }
+          else { if (btn) { btn.textContent = "🧠 Explain this asset (retry)"; btn.disabled = false; } }
+        } catch (e) { if (btn) { btn.textContent = "🧠 Explain this asset (retry)"; btn.disabled = false; } }
+      }
+
+      // ---- live market feed (real-time price + trades via Coinbase WS) ----
+      function stopLive() {
+        if (state.liveWS) { try { state.liveWS.onmessage = null; state.liveWS.onerror = null; state.liveWS.onclose = null; state.liveWS.close(); } catch {} state.liveWS = null; }
+        if (state.liveTimer) { clearTimeout(state.liveTimer); state.liveTimer = null; }
+      }
+      function startLive(a) {
+        stopLive();
+        const el = $("asset-live"); if (!el) return;
+        const sym = (a.symbol || "").toUpperCase();
+        if (!sym) { el.innerHTML = ""; return; }
+        const product = sym + "-USD";
+        el.innerHTML = `<h3 class="asset-news-h">Live market <span class="live-src">· Coinbase ${escapeHtml(product)}</span></h3>
+          <div class="live-head"><span class="live-dot" id="live-dot"></span><span class="live-price" id="live-price">connecting…</span></div>
+          <div class="trades" id="live-trades"></div>
+          <div class="live-note" id="live-note"></div>`;
+        let ws, lastPrice = null, got = false;
+        const unavailable = (msg) => {
+          const n = $("live-note"); if (n) n.textContent = msg;
+          const p = $("live-price"); if (p) p.textContent = "—";
+          const d = $("live-dot"); if (d) d.className = "live-dot off";
+        };
+        try { ws = new WebSocket("wss://ws-feed.exchange.coinbase.com"); }
+        catch { unavailable("Live feed unavailable in this browser."); return; }
+        state.liveWS = ws;
+        ws.onopen = () => { try { ws.send(JSON.stringify({ type: "subscribe", product_ids: [product], channels: ["ticker", "matches"] })); } catch {} };
+        ws.onerror = () => { const d = $("live-dot"); if (d) d.className = "live-dot off"; };
+        ws.onclose = () => { const d = $("live-dot"); if (d && !got) d.className = "live-dot off"; };
+        state.liveTimer = setTimeout(() => { if (!got) unavailable(`No live Coinbase feed for ${product} — the historical chart above still applies.`); }, 9000);
+        ws.onmessage = (ev) => {
+          let m; try { m = JSON.parse(ev.data); } catch { return; }
+          if (m.type === "error") { unavailable(`No live Coinbase feed for ${product}.`); return; }
+          if (m.type === "ticker" && m.price) {
+            got = true;
+            const d = $("live-dot"); if (d) d.className = "live-dot on";
+            const price = parseFloat(m.price);
+            const p = $("live-price");
+            if (p) {
+              p.textContent = "$" + price.toLocaleString(undefined, { maximumFractionDigits: price < 1 ? 6 : 2 });
+              p.classList.remove("up", "down");
+              if (lastPrice != null && price !== lastPrice) { void p.offsetWidth; p.classList.add(price > lastPrice ? "up" : "down"); }
+              lastPrice = price;
+            }
+          }
+          if (m.type === "match" || m.type === "last_match") { got = true; addTrade(m); }
+        };
+      }
+      function addTrade(m) {
+        const list = $("live-trades"); if (!list) return;
+        const price = parseFloat(m.price), size = parseFloat(m.size);
+        if (!(price > 0)) return;
+        const takerBuy = m.side === "sell"; // Coinbase `side` is the maker side; the taker (aggressor) is the opposite
+        const t = new Date(m.time || Date.now());
+        const sizeStr = size >= 1 ? size.toLocaleString(undefined, { maximumFractionDigits: 3 }) : String(Number(size.toPrecision(4)));
+        const row = document.createElement("div");
+        row.className = "trade " + (takerBuy ? "buy" : "sell");
+        row.innerHTML = `<span class="t-time">${t.toLocaleTimeString([], { hour12: false })}</span><span class="t-price">$${price.toLocaleString(undefined, { maximumFractionDigits: price < 1 ? 6 : 2 })}</span><span class="t-size">${sizeStr}</span><span class="t-side">${takerBuy ? "BUY" : "SELL"}</span>`;
+        list.insertBefore(row, list.firstChild);
+        while (list.children.length > 25) list.removeChild(list.lastChild);
+      }
+      function closeAsset() { stopLive(); $("assetOverlay").classList.remove("show"); }
       $("asset-close").addEventListener("click", closeAsset);
       // clicks inside the asset modal: star toggle, copy address, safety, swap
       $("asset-body").addEventListener("click", (e) => {

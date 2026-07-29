@@ -129,6 +129,9 @@ Click any coin — from Markets, a News `$SYMBOL` tag, or the Research board —
 get **one research surface** that fuses everything for that coin:
 - price + 7-day chart with **"what moved price"** news markers, 24h/7d/30d, a stat
   grid, description, links;
+- **Live market** — a real-time **price + trade tape** streamed from a **Coinbase
+  WebSocket** (client-side; green/red buy-sell prints), for major Coinbase-listed
+  assets;
 - **On-chain & trade** — every supported-chain contract, each with the *same rug
   safety check used on new launches* run inline, plus a non-custodial **Swap** on
   Solana;
@@ -141,13 +144,17 @@ Mapping is automatic where CoinGecko provides it (GitHub repo + contract
 addresses); Snapshot spaces are a curated map of the major DAOs.
 
 ### 🧠 AI features (optional Claude key)
-An optional Anthropic key powers three features, all guardrailed to **describe risk
-only — no buy/sell calls, no price predictions, not financial advice** (enforced in
-the system prompt):
+An optional Anthropic key powers five features, all guardrailed to **describe only
+— no buy/sell calls, no price predictions, not financial advice** (enforced in the
+system prompt):
 1. **AI risk read** — turns a launch's on-chain safety signals into a plain-English
    verdict ending in "Bottom line:".
 2. **"What matters now" digest** — a briefing over the top news stories.
 3. **Per-story "why it matters"** — significance of a single headline.
+4. **Asset explainer** — "what is this coin / what's its state" on any coin page.
+5. **Natural-language screener** — type what you're looking for on the Markets tab
+   ("small-caps under $50M with high volume") and Claude sets the cap/volume/sort
+   filters for you.
 
 Calls are made **server-side** (`/ai/*`) with `claude-opus-5`; the key is stored in
 the gitignored `config.json` (or an env var), masked on read, and never sent to the
@@ -195,7 +202,6 @@ There's a fuller engineering handoff in [HANDOFF.md](HANDOFF.md).
 
 ## Roadmap
 
-- **AI asset explainer** + **natural-language screener** (finish the AI set).
 - **EVM swaps** (0x/1inch + MetaMask) — the second half of the swap feature.
 - **Structured funding/unlock calendar** — needs a paid data key (DefiLlama Pro /
   CryptoRank / Token Unlocks); the hooks are staged.

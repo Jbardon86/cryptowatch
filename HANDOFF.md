@@ -99,7 +99,16 @@ wiring, and goes live with the owner's own key. Each item notes which below.
     `links.repos_url.github`, automatic): commits/7d, stars, issues, last push;
   - **Governance** — the DAO's recent Snapshot proposals (active/closed + votes),
     via a curated CoinGecko-id → Snapshot-space map (`COIN_SNAPSHOT`);
+  - **Live market** — real-time **price + trade tape** via a **Coinbase WebSocket**
+    (`wss://ws-feed.exchange.coinbase.com`, `<SYM>-USD`, `ticker`+`matches`),
+    opened **client-side** in the browser (keeps the server zero-dep; Coinbase is
+    US-reliable, unlike Binance). Green/red buy-sell tape, live-flashing price,
+    graceful "no feed for this pair" fallback, WS closed on modal close. Verified
+    live in-browser (BTC/ETH streaming). Only major Coinbase-listed pairs have a
+    feed; everything else still shows the CoinGecko chart.
   - **In the news** — per-asset clustered mentions.
+  - **🧠 Explain this asset** — AI plain-English "what is this / what's its state"
+    from the page's own data (optional Claude key; `/ai/explain`).
   - Mapping is automatic where CoinGecko provides it (GitHub repo, contracts);
     Snapshot spaces are curated for the majors (long-tail coins have none).
     Endpoints reused/added: `/asset` (enriched), `/dev/repo`, `/gov/space`,
@@ -175,6 +184,8 @@ wiring, and goes live with the owner's own key. Each item notes which below.
 | `GET/POST /ai/config`, `POST /ai/risk` | Optional Claude key + AI risk verdict |
 | `GET /ai/digest` | AI "what matters now" briefing (optional key) |
 | `POST /ai/why` | AI per-story "why it matters" (optional key) |
+| `POST /ai/explain` | AI "what is this asset" explainer for the coin page (optional key) |
+| `POST /ai/screen` | AI natural-language → cap/volume/sort filter for Markets (optional key) |
 | `GET /gov` | Snapshot active DAO proposals (all spaces) |
 | `GET /gov/space?space=` | One DAO's recent proposals (unified asset page) |
 | `GET /dev`, `GET/POST /dev/config` | GitHub dev activity + optional GitHub token |
@@ -234,12 +245,15 @@ governance, auto-fused (see §3 Markets). This is the thing that turned the
 separate feeds into one research surface. Remaining polish: extend `COIN_SNAPSHOT`
 beyond the ~25 curated DAOs; map to more repos than CoinGecko's single default.
 
+**✅ AI set finished.** All the AI features are now built: risk read, news digest,
+per-story "why it matters", **asset explainer** (`/ai/explain`, on the coin page),
+and **natural-language screener** (`/ai/screen`, drives the Markets cap/volume/sort
+filters). All reuse the one optional Claude key and hold the no-advice guardrails.
+
+**✅ Real-time layer.** Coin pages carry a live **Coinbase WS** price + trade tape
+(client-side; see §3). This was the "live trades" ask.
+
 **Other staged items (NOT built):**
-- **AI asset explainer** — a plain-English "what is this coin / what's its state"
-  read on the Markets detail (reuses the Claude key). *Staged.*
-- **Natural-language screener** — free-text → market/launch filter via Claude.
-  *Staged.* (The AI **news digest** that was on this list IS done — it shipped as
-  part of pillar 3 — but the explainer and screener above are still to build.)
 - **Structured funding/unlock feeds** — the paid-key half of pillar 4 (see above).
 - **EVM swaps** (0x/1inch + MetaMask, token approvals, chain switching) — the second half of the swap feature.
 - **Persist launches** for backtesting which signals preceded winners vs rugs.

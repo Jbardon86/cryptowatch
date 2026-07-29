@@ -1541,6 +1541,62 @@ async function aiWhy(story) {
   return { why: text };
 }
 
+// ---- AI asset explainer + natural-language screener (finish the AI set) ----
+const AI_EXPLAIN_SYSTEM = `You explain what a crypto asset is and its current state, for a researcher who wants a quick, grounded read. Given the asset's name, symbol, CoinGecko description, market stats, and any dev/governance/news signals provided, write 2 to 4 sentences: what it is and does, its category/sector, and any notable current context.
+
+Hard rules: use ONLY the provided data; if the description is thin, say the data is limited rather than inventing. Do NOT give buy/sell/investment advice or predict price. No preamble, no markdown.`;
+
+const aiExplainCache = new Map(); // coin id -> { text, ts }
+async function aiExplain(b) {
+  if (!aiKey()) return { error: "no_key" };
+  const id = b.id || b.symbol || "";
+  const hit = aiExplainCache.get(id);
+  if (hit && Date.now() - hit.ts < AI_WHY_TTL) return { explanation: hit.text, cached: true };
+  const parts = [`Asset: ${b.name || b.symbol} (${(b.symbol || "").toUpperCase()})`];
+  if (b.rank) parts.push(`Market-cap rank #${b.rank}`);
+  if (b.marketCap) parts.push(`Market cap ${aiUsd(b.marketCap)}`);
+  if (typeof b.change24h === "number") parts.push(`24h change ${b.change24h.toFixed(1)}%`);
+  if (typeof b.change7d === "number") parts.push(`7d change ${b.change7d.toFixed(1)}%`);
+  if (b.description) parts.push(`CoinGecko description: ${String(b.description).slice(0, 800)}`);
+  if (b.dev) parts.push(`GitHub activity: ${String(b.dev).slice(0, 160)}`);
+  if (b.gov) parts.push(`Governance: ${String(b.gov).slice(0, 160)}`);
+  if (Array.isArray(b.news) && b.news.length) parts.push(`Recent headlines: ${b.news.slice(0, 4).map(String).join(" | ").slice(0, 400)}`);
+  const text = await callClaude(AI_EXPLAIN_SYSTEM, parts.join("\n") + "\n\nExplain this asset.", 340);
+  aiExplainCache.set(id, { text, ts: Date.now() });
+  return { explanation: text };
+}
+
+const AI_SCREEN_SYSTEM = `You convert a plain-English crypto market-screen request into a strict JSON filter for a market-cap-ranked coin table. The ONLY filterable fields are:
+- "minCap","maxCap": market cap in USD (number or null)
+- "minVol": minimum 24h volume in USD (number or null)
+- "order": how to sort the whole universe — one of "market_cap_desc","market_cap_asc","volume_desc","volume_asc"
+
+Interpret cap tiers sensibly: micro <$1,000,000; small $1M–$50M; mid $50M–$1B; large >$1B. "low cap"/"smallest" => order "market_cap_asc". "most traded"/"high volume" => "volume_desc".
+
+Return ONLY a JSON object, no markdown and no text outside it:
+{"minCap":<num|null>,"maxCap":<num|null>,"minVol":<num|null>,"order":"<one of the four>","note":"<one short sentence: what you applied, and note anything requested that these four fields can't express (e.g. sector, chain, age)>"}
+
+Never give financial advice.`;
+
+async function aiScreen(query) {
+  if (!aiKey()) return { error: "no_key" };
+  const raw = await callClaude(AI_SCREEN_SYSTEM, `Request: "${String(query || "").slice(0, 300)}"`, 300);
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return { error: "parse", raw };
+  let f;
+  try { f = JSON.parse(m[0]); } catch { return { error: "parse", raw }; }
+  const ORDERS = new Set(["market_cap_desc", "market_cap_asc", "volume_desc", "volume_asc"]);
+  return {
+    filter: {
+      minCap: typeof f.minCap === "number" ? f.minCap : null,
+      maxCap: typeof f.maxCap === "number" ? f.maxCap : null,
+      minVol: typeof f.minVol === "number" ? f.minVol : null,
+      order: ORDERS.has(f.order) ? f.order : "market_cap_desc",
+    },
+    note: typeof f.note === "string" ? f.note : "",
+  };
+}
+
 // ---- HTTP server ----------------------------------------------------------
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
 
@@ -1898,6 +1954,42 @@ const server = http.createServer((req, res) => {
         const b = JSON.parse(body || "{}");
         if (!b.title) throw new Error("title required");
         aiWhy(b)
+          .then((r) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(r)); })
+          .catch((e) => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === "/ai/explain" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const b = JSON.parse(body || "{}");
+        if (!b.id && !b.symbol) throw new Error("id or symbol required");
+        aiExplain(b)
+          .then((r) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(r)); })
+          .catch((e) => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === "/ai/screen" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const b = JSON.parse(body || "{}");
+        if (!b.query || !String(b.query).trim()) throw new Error("query required");
+        aiScreen(b.query)
           .then((r) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(r)); })
           .catch((e) => { res.writeHead(502, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: e.message })); });
       } catch (e) {
